@@ -1,0 +1,25 @@
+{
+  "name": "instatubebottelegram",
+  "version": "1.0.0",
+  "description": "Download video on telegram",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tiagomatrixd/InstaTubeBotTelegram.git"
+  },
+  "author": "Tiago Almeida",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tiagomatrixd/InstaTubeBotTelegram/issues"
+  },
+  "homepage": "https://github.com/tiagomatrixd/InstaTubeBotTelegram#readme",
+  "dependencies": {
+    "btch-downloader": "^2.8.4",
+    "telegraf": "^4.16.3"
+  }
+}
