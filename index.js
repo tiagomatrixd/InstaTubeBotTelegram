@@ -1,7 +1,6 @@
 import { Telegraf, Markup } from 'telegraf';
 import { igdl, youtube, twitter, fbdown, ttdl } from 'btch-downloader';
 import dotenv from 'dotenv';
-import { platform } from 'os';
 dotenv.config();
 
 
