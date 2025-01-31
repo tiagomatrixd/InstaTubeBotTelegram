@@ -13,7 +13,7 @@
     "url": "git+https://github.com/tiagomatrixd/InstaTubeBotTelegram.git"
   },
   "author": "Tiago Almeida",
-  "license": "ISC",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/tiagomatrixd/InstaTubeBotTelegram/issues"
   },
