@@ -1,6 +1,7 @@
 import { Telegraf, Markup } from 'telegraf';
 import { igdl, youtube, twitter, fbdown, ttdl } from 'btch-downloader';
 import dotenv from 'dotenv';
+import { platform } from 'os';
 dotenv.config();
 
 
@@ -145,10 +146,20 @@ bot.hears(urlPatterns, async (ctx) => {
             { url: mediaInfo.url },
             {
               caption: mediaInfo.caption,
-              reply_markup: Markup.inlineKeyboard(buttons), // Sintaxe correta
+              
               thumbnail: mediaInfo.thumbnail 
             }
           );
+          if(url.includes('youtube.com') || url.includes('youtu.be')){
+            await ctx.reply(
+                '🔽 Baixe o áudio separadamente:',
+                Markup.inlineKeyboard([
+                  Markup.button.callback('⬇️ MP3', `mp3:${url}`)
+                ])
+            );
+          } 
+         
+        
     }
    
   
@@ -166,7 +177,7 @@ bot.hears(urlPatterns, async (ctx) => {
     const mediaInfo = await downloadMedia(url);
     
     if (mediaInfo?.mp3) {
-      await ctx.replyWithAudio({ url: mediaInfo.mp3 });
+      await ctx.replyWithAudio({ url: mediaInfo.mp3, filename: mediaInfo?.caption || 'Audio.mp3' });
       await ctx.deleteMessage(); // Remove o botão
     }
   });
