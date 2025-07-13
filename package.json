@@ -19,7 +19,7 @@
   },
   "homepage": "https://github.com/tiagomatrixd/InstaTubeBotTelegram#readme",
   "dependencies": {
-    "btch-downloader": "^2.8.4",
+    "btch-downloader": "^4.0.15",
     "dotenv": "^16.4.7",
     "telegraf": "^4.16.3"
   }
