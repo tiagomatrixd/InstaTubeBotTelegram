@@ -72,11 +72,12 @@ function extractThreadsId(url) {
   // Padrões possíveis de URL do Threads:
   // https://threads.com/@username/post/abc123
   // https://threads.com/t/abc123
+  // https://www.threads.com/@username/post/abc123
   const patterns = [
     /threads\.com\/@[\w\.]+\/post\/([\w-]+)/,
     /threads\.com\/t\/([\w-]+)/,
-    /threads\.net\/@[\w\.]+\/post\/([\w-]+)/,
-    /threads\.net\/t\/([\w-]+)/
+    /www\.threads\.com\/@[\w\.]+\/post\/([\w-]+)/,
+    /www\.threads\.com\/t\/([\w-]+)/
   ];
   
   for (const pattern of patterns) {
@@ -89,36 +90,93 @@ function extractThreadsId(url) {
   return null;
 }
 
+// Função para construir URL completa do Threads
+function buildThreadsUrl(originalUrl, id) {
+  // Se a URL original já contém o username, usa ela
+  const usernameMatch = originalUrl.match(/@([\w\.]+)\/post/);
+  if (usernameMatch) {
+    const username = usernameMatch[1];
+    return `https://www.threads.com/@${username}/post/${id}`;
+  }
+  
+  // Fallback para formato simples
+  return `https://www.threads.com/t/${id}`;
+}
+
 // Função para baixar do Threads usando threadster.app
-async function threadster(id) {
+async function threadster(originalUrl, id) {
   try {
     console.log(`🧵 Baixando Threads ID: ${id}`);
     
-    // Enviando requisição GET para threadster.app
-    const response = await axios.get(`https://threadster.app/download/${id}`, {
-      headers: {
-        'User-Agent': getRandomUserAgent(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      },
-      timeout: 15000
-    });
+    // Constrói a URL completa do Threads
+    const threadsUrl = buildThreadsUrl(originalUrl, id);
+    console.log(`🔗 URL do Threads: ${threadsUrl}`);
+
+    const formData = new URLSearchParams();
+    formData.append('url', originalUrl);
+    
+    // Enviando requisição POST para threadster.app
+    const response = await axios.post('https://threadster.app/download', 
+      formData.toString(), // Dados do formulário
+      {
+        headers: {
+          'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+          'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
+          'cache-control': 'max-age=0',
+          'content-type': 'application/x-www-form-urlencoded',
+          'cookie': '_csrf=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NTI1MzIxMzQsImV4cCI6MTc1MjUzNTczNH0.Q-9vTftj86jOdbOo5DWt6ZwBJX25eJpfKxRN_5_F654',
+          'origin': 'null',
+          'priority': 'u=0, i',
+          'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Microsoft Edge";v="138"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"Windows"',
+          'sec-fetch-dest': 'document',
+          'sec-fetch-mode': 'navigate',
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-user': '?1',
+          'upgrade-insecure-requests': '1',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Edg/138.0.0.0'
+        },
+        timeout: 20000,
+        maxRedirects: 5
+      }
+    );
 
     // Carregando HTML no cheerio para scraping
     const $ = cheerio.load(response.data);
+    
+    // Scraping dos elementos da página baseado na estrutura real do threadster.app
+    const profile = $('.download__item__profile_pic img').attr('src') || 
+                   $('.download_item_profile_pic img').attr('src') ||
+                   $('img[alt*="profile"]').attr('src');
+                   
+    const username = $('.download__item__profile_pic div span').text().trim() ||
+                    $('.download__item__user_info span').text().trim() ||
+                    $('[class*="profile"] span').text().trim();
+                   
+    const caption = $('.download__item__caption__text').text().trim() || 
+                   $('.download_item_caption_text').text().trim() ||
+                   $('.caption__text').text().trim();
+                   
+    const download = $('.download__item__info__actions__button').attr('href') || 
+                    $('.download_item_info_actions_button').attr('href') ||
+                    $('a.btn[href*="downloads.acxcdn.com"]').attr('href') ||
+                    $('table a.btn').attr('href') ||
+                    $('a[href*=".mp4"]').attr('href');
+                    
+    const resolution = $('table tr:nth-child(2) td:first-child').text().trim() ||
+                      $('table td').first().text().trim() ||
+                      'HD';
 
-    // Scraping dos elementos da página
-    const profile = $('.download_item_profile_pic img').attr('src');
-    const caption = $('.download_itemcaption_text').text().trim();
-    const download = $('.download_iteminfoactions_button').attr('href');
-    const resolution = $('table tr:nth-child(2) td:first-child').text();
-
+    console.log(`🔍 Scraping concluído:`);
+    console.log(`  - Profile: ${!!profile} (${profile?.substring(0, 80)}...)`);
+    console.log(`  - Username: ${username}`);
+    console.log(`  - Caption: ${caption?.substring(0, 100)}...`);
+    console.log(`  - Download: ${!!download} (${download?.substring(0, 80)}...)`);
+    console.log(`  - Resolution: ${resolution}`);
     // Verificar se encontrou o link de download
     if (!download) {
+      console.log(`❌ HTML recebido para debug:\n${response.data.substring(0, 2000)}...`);
       throw new Error('Link de download não encontrado na página');
     }
 
@@ -128,12 +186,13 @@ async function threadster(id) {
     return {
       profile: {
         picture: profile,
+        username: username || 'Unknown User'
       },
       content: {
         caption: caption || '',
         download: {
           link: download,
-          resolution: resolution || 'Desconhecida',
+          resolution: resolution || 'HD',
         },
       },
     };
@@ -355,9 +414,8 @@ async function detectMediaType(url) {
 // Função para formatar a legenda com o usuário e link original
 function formatCaption(originalCaption, user, originalUrl) {
   const userMention = user.username ? `@${user.username}` : user.first_name;
-  const userLink = `[${userMention}](tg://user?id=${user.id})`;
   
-  return `${originalCaption}\n\n📤 Enviado por: ${userLink}\n🔗 [Link original](${originalUrl})`;
+  return `${originalCaption}\n\n📤 Enviado por: ${userMention}\n🔗 [Link original](${originalUrl})`;
 }
 
 // Função para processar dados específicos de cada plataforma
@@ -408,15 +466,23 @@ function parseMediaData(rawData, platform, url) {
       }
       
       const threadsContent = rawData.content;
+      const threadsProfile = rawData.profile;
+      
       if (!threadsContent?.download?.link) {
         console.error('Link de download não encontrado');
         return null;
       }
       
+      // Legenda simples apenas com identificação da plataforma e usuário
+      let threadsCaption = '🧵 Threads';
+      if (threadsProfile?.username) {
+        threadsCaption += ` por ${threadsProfile.username}`;
+      }
+      
       return {
         url: threadsContent.download.link,
-        caption: threadsContent.caption ? `🧵 ${threadsContent.caption}` : '🧵 Threads Meta',
-        thumbnail: rawData.profile?.picture || null,
+        caption: threadsCaption,
+        thumbnail: threadsProfile?.picture || null,
         resolution: threadsContent.download.resolution,
         isImage: false, // Threads geralmente são vídeos
         mediaType: 'video',
@@ -495,7 +561,7 @@ async function downloadMedia(url) {
       }
       
       console.log(`🔍 ID extraído do Threads: ${threadsId}`);
-      data = await threadster(threadsId);
+      data = await threadster(url, threadsId); // Passa a URL original e o ID
       return parseMediaData(data, 'threads', url);
     }
     if (urlPatterns[5].test(url)) {
