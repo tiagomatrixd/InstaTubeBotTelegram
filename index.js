@@ -105,6 +105,165 @@ function buildThreadsUrl(originalUrl, id) {
   return `https://www.threads.com/t/${id}`;
 }
 
+// Função para validar se um link é realmente um link de download válido
+function isValidDownloadLink(url) {
+  if (!url || typeof url !== 'string') return false;
+  
+  // URLs que NÃO são links de download válidos
+  const invalidPatterns = [
+    /chrome\.google\.com/,
+    /chrome-extension:/,
+    /mailto:/,
+    /tel:/,
+    /javascript:/,
+    /chrome\.webstore/,
+    /addons\.mozilla/,
+    /github\.com.*releases/,
+    /play\.google\.com/,
+    /apps\.apple\.com/,
+    /^#/,  // Âncoras
+    /^\//,  // URLs relativas sem domínio
+    /threadster\.app\/?$/,  // Página inicial do threadster
+    /threadster\.app\/download$/,  // Página de download sem parâmetros
+  ];
+  
+  // Verifica se contém padrões inválidos
+  for (const pattern of invalidPatterns) {
+    if (pattern.test(url)) {
+      return false;
+    }
+  }
+  
+  // URLs que SÃO links de download válidos
+  const validPatterns = [
+    /downloads\.acxcdn\.com/,
+    /\.mp4(\?|$)/,
+    /\.mov(\?|$)/,
+    /\.avi(\?|$)/,
+    /\.mkv(\?|$)/,
+    /\.webm(\?|$)/,
+    /cdn.*\.(mp4|mov|avi|mkv|webm)/,
+    /storage.*\.(mp4|mov|avi|mkv|webm)/,
+    /media.*\.(mp4|mov|avi|mkv|webm)/,
+    /download.*\.(mp4|mov|avi|mkv|webm)/,
+    // URLs que contêm tokens ou parâmetros de download
+    /[?&]token=/,
+    /[?&]download=/,
+    /[?&]file=/,
+    // CDNs comuns para vídeos
+    /amazonaws\.com.*\.(mp4|mov|avi|mkv|webm)/,
+    /googleusercontent\.com.*\.(mp4|mov|avi|mkv|webm)/,
+    /cloudfront\.net.*\.(mp4|mov|avi|mkv|webm)/,
+    // Padrões específicos do Threads/Meta
+    /scontent.*\.(mp4|mov|avi|mkv|webm)/,
+    /fbcdn\.net.*\.(mp4|mov|avi|mkv|webm)/,
+    /cdninstagram\.com.*\.(mp4|mov|avi|mkv|webm)/,
+    // Outros CDNs comuns
+    /\.b-cdn\.net.*\.(mp4|mov|avi|mkv|webm)/,
+    /\.fastly\.com.*\.(mp4|mov|avi|mkv|webm)/,
+    /\.jsdelivr\.net.*\.(mp4|mov|avi|mkv|webm)/,
+    // URLs que começam com blob ou data (vídeos inline)
+    /^blob:/,
+    /^data:video/,
+  ];
+  
+  // Verifica se contém padrões válidos
+  for (const pattern of validPatterns) {
+    if (pattern.test(url)) {
+      return true;
+    }
+  }
+  
+  // Se chegou até aqui, é um link suspeito - só aceita se for HTTPS e não for página web comum
+  if (url.startsWith('https://') && !url.includes('.html') && !url.includes('.htm') && !url.includes('www.')) {
+    // URLs diretas sem página web são provavelmente arquivos
+    return true;
+  }
+  
+  return false;
+}
+
+// Cache para cookie CSRF do threadster
+let csrfCache = {
+  token: null,
+  expires: 0
+};
+
+// Função para obter cookie CSRF válido do threadster.app
+async function getThreadsterCSRF() {
+  try {
+    // Verifica se o cache ainda é válido (30 minutos)
+    const now = Date.now();
+    if (csrfCache.token && csrfCache.expires > now) {
+      console.log(`🍪 Usando cookie CSRF do cache: ${csrfCache.token.substring(0, 20)}...`);
+      return csrfCache.token;
+    }
+    
+    console.log('🍪 Obtendo novo cookie CSRF do threadster.app...');
+    
+    const response = await axios.get('https://threadster.app', {
+      headers: {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
+        'cache-control': 'max-age=0',
+        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Microsoft Edge";v="138"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'none',
+        'sec-fetch-user': '?1',
+        'upgrade-insecure-requests': '1',
+        'user-agent': getRandomUserAgent()
+      },
+      timeout: 10000
+    });
+
+    // Extrai o cookie CSRF dos headers de resposta
+    const setCookieHeader = response.headers['set-cookie'];
+    if (setCookieHeader) {
+      for (const cookie of setCookieHeader) {
+        if (cookie.includes('_csrf=')) {
+          const csrfMatch = cookie.match(/_csrf=([^;]+)/);
+          if (csrfMatch) {
+            const csrfToken = csrfMatch[1];
+            
+            // Salva no cache com expiração de 30 minutos
+            csrfCache.token = csrfToken;
+            csrfCache.expires = now + (30 * 60 * 1000); // 30 minutos
+            
+            console.log(`✅ Novo cookie CSRF obtido: ${csrfToken.substring(0, 30)}...`);
+            return csrfToken;
+          }
+        }
+      }
+    }
+    
+    // Fallback: usar cookie mais recente se não conseguir obter um novo
+    const fallbackToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NTI1MzcyNTIsImV4cCI6MTc1MjU0MDg1Mn0.jghZoa_OiiPNco4Gr2HtzcgBluzqZiuU2Y8TwM1p2wE';
+    console.log('⚠️ Usando cookie fallback (não encontrado nos headers)');
+    
+    // Salva no cache mesmo sendo fallback
+    csrfCache.token = fallbackToken;
+    csrfCache.expires = now + (15 * 60 * 1000); // 15 minutos para fallback
+    
+    return fallbackToken;
+    
+  } catch (error) {
+    console.error('❌ Erro ao obter cookie CSRF:', error.message);
+    // Usar o cookie mais recente como fallback
+    const fallbackToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NTI1MzcyNTIsImV4cCI6MTc1MjU0MDg1Mn0.jghZoa_OiiPNco4Gr2HtzcgBluzqZiuU2Y8TwM1p2wE';
+    console.log('⚠️ Usando cookie fallback devido ao erro');
+    
+    // Salva no cache mesmo sendo fallback
+    const now = Date.now();
+    csrfCache.token = fallbackToken;
+    csrfCache.expires = now + (5 * 60 * 1000); // 5 minutos para fallback com erro
+    
+    return fallbackToken;
+  }
+}
+
 // Função para baixar do Threads usando threadster.app
 async function threadster(originalUrl, id) {
   try {
@@ -114,10 +273,14 @@ async function threadster(originalUrl, id) {
     const threadsUrl = buildThreadsUrl(originalUrl, id);
     console.log(`🔗 URL do Threads: ${threadsUrl}`);
 
+    // Obtém cookie CSRF dinâmico
+    const csrfToken = await getThreadsterCSRF();
+    console.log(`🍪 Usando cookie CSRF: ${csrfToken.substring(0, 30)}...`);
+
     const formData = new URLSearchParams();
     formData.append('url', originalUrl);
     
-    // Enviando requisição POST para threadster.app
+    // Enviando requisição POST para threadster.app com cookie atualizado
     const response = await axios.post('https://threadster.app/download', 
       formData.toString(), // Dados do formulário
       {
@@ -126,7 +289,7 @@ async function threadster(originalUrl, id) {
           'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
           'cache-control': 'max-age=0',
           'content-type': 'application/x-www-form-urlencoded',
-          'cookie': '_csrf=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NTI1MzIxMzQsImV4cCI6MTc1MjUzNTczNH0.Q-9vTftj86jOdbOo5DWt6ZwBJX25eJpfKxRN_5_F654',
+          'cookie': `_csrf=${csrfToken}`,
           'origin': 'null',
           'priority': 'u=0, i',
           'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Microsoft Edge";v="138"',
@@ -137,7 +300,7 @@ async function threadster(originalUrl, id) {
           'sec-fetch-site': 'same-origin',
           'sec-fetch-user': '?1',
           'upgrade-insecure-requests': '1',
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 Edg/138.0.0.0'
+          'user-agent': getRandomUserAgent() // User agent dinâmico também
         },
         timeout: 20000,
         maxRedirects: 5
@@ -150,21 +313,64 @@ async function threadster(originalUrl, id) {
     // Scraping dos elementos da página baseado na estrutura real do threadster.app
     const profile = $('.download__item__profile_pic img').attr('src') || 
                    $('.download_item_profile_pic img').attr('src') ||
-                   $('img[alt*="profile"]').attr('src');
+                   $('img[alt*="profile"]').attr('src') ||
+                   $('img[src*="profile"]').attr('src');
                    
     const username = $('.download__item__profile_pic div span').text().trim() ||
                     $('.download__item__user_info span').text().trim() ||
-                    $('[class*="profile"] span').text().trim();
+                    $('[class*="profile"] span').text().trim() ||
+                    $('.user-info span').text().trim() ||
+                    $('.username').text().trim();
                    
     const caption = $('.download__item__caption__text').text().trim() || 
                    $('.download_item_caption_text').text().trim() ||
-                   $('.caption__text').text().trim();
+                   $('.caption__text').text().trim() ||
+                   $('.caption').text().trim() ||
+                   $('[class*="caption"]').text().trim();
                    
-    const download = $('.download__item__info__actions__button').attr('href') || 
-                    $('.download_item_info_actions_button').attr('href') ||
-                    $('a.btn[href*="downloads.acxcdn.com"]').attr('href') ||
-                    $('table a.btn').attr('href') ||
-                    $('a[href*=".mp4"]').attr('href');
+    // Primeiro, filtra apenas links que são realmente de download de mídia
+    let download = null;
+    
+    // Seletores mais específicos primeiro (ordem de prioridade)
+    const downloadSelectors = [
+      '.download__item__info__actions__button',
+      '.download_item_info_actions_button',
+      'body > section.content__section.download_result_section.mt-60 > div > div > div > div > div.download_item_info > table > tbody > tr:nth-child(2) > td:nth-child(2) > a',
+      'table tbody tr:nth-child(2) td:nth-child(2) a',
+      'table tr:nth-child(2) td:nth-child(2) a',
+      'table a.btn',
+      'a.btn[href*="downloads.acxcdn.com"]',
+      'a[href*=".mp4"]',
+      'a.download-btn',
+      'a[class*="download"]'
+    ];
+    
+    // Testa cada seletor e valida se o link é válido
+    for (const selector of downloadSelectors) {
+      const element = $(selector);
+      const href = element.attr('href');
+      
+      if (href && isValidDownloadLink(href)) {
+        console.log(`✅ Link encontrado com seletor: ${selector}`);
+        console.log(`🔗 URL: ${href.substring(0, 100)}...`);
+        download = href;
+        break;
+      } else if (href) {
+        console.log(`❌ Link inválido rejeitado: ${href.substring(0, 100)}... (seletor: ${selector})`);
+      }
+    }
+    
+    // Se não encontrou com seletores específicos, procura por qualquer link de download válido
+    if (!download) {
+      $('a').each((i, el) => {
+        const href = $(el).attr('href');
+        if (href && isValidDownloadLink(href)) {
+          console.log(`✅ Link encontrado por busca geral: ${href.substring(0, 100)}...`);
+          download = href;
+          return false; // Para o loop
+        }
+      });
+    }
                     
     const resolution = $('table tr:nth-child(2) td:first-child').text().trim() ||
                       $('table td').first().text().trim() ||
@@ -176,8 +382,57 @@ async function threadster(originalUrl, id) {
     console.log(`  - Caption: ${caption?.substring(0, 100)}...`);
     console.log(`  - Download: ${!!download} (${download?.substring(0, 80)}...)`);
     console.log(`  - Resolution: ${resolution}`);
-    // Verificar se encontrou o link de download
+    
+    if (download) {
+      console.log(`✅ Link de download válido encontrado: ${download}`);
+    }
     if (!download) {
+      console.log(`❌ Link de download não encontrado. Analisando estrutura HTML...`);
+      
+      // Debug: mostrar todos os links encontrados com validação
+      const allLinks = [];
+      $('a').each((i, el) => {
+        const href = $(el).attr('href');
+        const text = $(el).text().trim();
+        if (href) {
+          const isValid = isValidDownloadLink(href);
+          allLinks.push({ 
+            href: href.substring(0, 80), 
+            text: text.substring(0, 30),
+            valid: isValid,
+            reason: isValid ? 'VÁLIDO' : 'INVÁLIDO'
+          });
+        }
+      });
+      
+      console.log(`🔗 Links encontrados (${allLinks.length}):`);
+      allLinks.slice(0, 15).forEach((link, i) => {
+        console.log(`  ${i + 1}. [${link.valid ? '✅' : '❌'}] ${link.href}`);
+        console.log(`      Texto: "${link.text}" | Status: ${link.reason}`);
+      });
+      
+      // Debug: mostrar estrutura das tabelas com mais detalhes
+      $('table').each((i, table) => {
+        console.log(`📊 Tabela ${i + 1}:`);
+        $(table).find('tr').each((j, row) => {
+          const cells = $(row).find('td, th');
+          console.log(`  Linha ${j + 1}: ${cells.length} células`);
+          cells.each((k, cell) => {
+            const text = $(cell).text().trim();
+            const links = $(cell).find('a');
+            if (links.length > 0) {
+              links.each((l, link) => {
+                const href = $(link).attr('href');
+                const isValid = href ? isValidDownloadLink(href) : false;
+                console.log(`    ${k + 1}: "${text.substring(0, 40)}" [LINK: ${isValid ? '✅' : '❌'}] ${href ? href.substring(0, 60) : 'N/A'}`);
+              });
+            } else {
+              console.log(`    ${k + 1}: "${text.substring(0, 40)}"`);
+            }
+          });
+        });
+      });
+      
       console.log(`❌ HTML recebido para debug:\n${response.data.substring(0, 2000)}...`);
       throw new Error('Link de download não encontrado na página');
     }
@@ -413,21 +668,12 @@ async function detectMediaType(url) {
   }
 }
 
-// Função para escapar caracteres especiais do Markdown
-function escapeMarkdown(text) {
-  return text.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
-}
-
 // Função para formatar a legenda com o usuário e link original
 function formatCaption(originalCaption, user, originalUrl) {
   const userMention = user.username ? `@${user.username}` : user.first_name;
   
-  // Escapa caracteres especiais na legenda original
-  const safeCaptionText = escapeMarkdown(originalCaption);
-  const safeUserMention = escapeMarkdown(userMention);
-  
-  // Para o link, vamos usar texto simples ao invés de link clicável para evitar problemas
-  return `${safeCaptionText}\n\n📤 Enviado por: ${safeUserMention}\n🔗 Link original: ${originalUrl}`;
+  // Usando HTML ao invés de Markdown para melhor compatibilidade
+  return `${originalCaption}\n\n📤 Enviado por: ${userMention}\n🔗 <a href="${originalUrl}">Link original</a>`;
 }
 
 // Função para processar dados específicos de cada plataforma
@@ -632,7 +878,8 @@ bot.hears(urlPatterns, async (ctx) => {
         await ctx.replyWithAudio(
           { url: mediaInfo.mp3, filename: mediaInfo?.caption || 'Audio.mp3' },
           { 
-            caption: formattedCaption
+            caption: formattedCaption,
+            parse_mode: 'HTML'
           }
         );
        
@@ -643,7 +890,8 @@ bot.hears(urlPatterns, async (ctx) => {
                 await ctx.replyWithPhoto(
                     { url: mediaInfo.url },
                     {
-                      caption: formattedCaption
+                      caption: formattedCaption,
+                      parse_mode: 'HTML'
                     }
                   );
             } catch (error) {
@@ -654,6 +902,7 @@ bot.hears(urlPatterns, async (ctx) => {
                       { url: mediaInfo.url },
                       {
                         caption: formattedCaption,
+                        parse_mode: 'HTML',
                         thumbnail: mediaInfo.thumbnail 
                       }
                     );
@@ -665,7 +914,7 @@ bot.hears(urlPatterns, async (ctx) => {
                     { thumbnail: mediaInfo.thumbnail }
                   );
                   // Enviar legenda separadamente
-                  await ctx.reply(formattedCaption);
+                  await ctx.reply(formattedCaption, { parse_mode: 'HTML' });
                 }
             }
         } else {
@@ -674,6 +923,7 @@ bot.hears(urlPatterns, async (ctx) => {
                     { url: mediaInfo.url },
                     {
                       caption: formattedCaption,
+                      parse_mode: 'HTML',
                       thumbnail: mediaInfo.thumbnail 
                     }
                   );
@@ -685,7 +935,8 @@ bot.hears(urlPatterns, async (ctx) => {
                       await ctx.replyWithPhoto(
                           { url: mediaInfo.url },
                           {
-                            caption: formattedCaption
+                            caption: formattedCaption,
+                            parse_mode: 'HTML'
                           }
                         );
                     } catch (photoError) {
@@ -695,7 +946,7 @@ bot.hears(urlPatterns, async (ctx) => {
                         { url: mediaInfo.url }
                       );
                       // Enviar legenda separadamente
-                      await ctx.reply(formattedCaption);
+                      await ctx.reply(formattedCaption, { parse_mode: 'HTML' });
                     }
                 }
             }
@@ -750,7 +1001,8 @@ bot.hears(urlPatterns, async (ctx) => {
         await ctx.replyWithAudio(
           { url: mediaInfo.mp3, filename: filename },
           { 
-            caption: formattedCaption
+            caption: formattedCaption,
+            parse_mode: 'HTML'
           }
         );
         await ctx.deleteMessage(); // Remove o botão apenas se o envio foi bem-sucedido
@@ -762,7 +1014,8 @@ bot.hears(urlPatterns, async (ctx) => {
           await ctx.replyWithDocument(
             { url: mediaInfo.mp3, filename: filename },
             { 
-              caption: formattedCaption
+              caption: formattedCaption,
+              parse_mode: 'HTML'
             }
           );
           await ctx.deleteMessage();
@@ -773,7 +1026,7 @@ bot.hears(urlPatterns, async (ctx) => {
             await ctx.replyWithDocument(
               { url: mediaInfo.mp3, filename: filename }
             );
-            await ctx.reply(formattedCaption);
+            await ctx.reply(formattedCaption, { parse_mode: 'HTML' });
             await ctx.deleteMessage();
           } catch (finalError) {
             console.error('Erro final ao enviar documento:', finalError.message);
