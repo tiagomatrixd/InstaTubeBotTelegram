@@ -7,8 +7,10 @@ import * as cheerio from 'cheerio';
 import dotenv from 'dotenv';
 dotenv.config();
 
-
 const bot = new Telegraf(process.env.BOT_TOKEN);
+
+// ID do dono do bot (substitua pelo seu ID do Telegram)
+const OWNER_ID = process.env.OWNER_ID || 165384194; // Seu ID do Telegram
 
 // Regex para detectar URLs
 const urlPatterns = [
@@ -411,11 +413,21 @@ async function detectMediaType(url) {
   }
 }
 
+// Função para escapar caracteres especiais do Markdown
+function escapeMarkdown(text) {
+  return text.replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
+}
+
 // Função para formatar a legenda com o usuário e link original
 function formatCaption(originalCaption, user, originalUrl) {
   const userMention = user.username ? `@${user.username}` : user.first_name;
   
-  return `${originalCaption}\n\n📤 Enviado por: ${userMention}\n🔗 [Link original](${originalUrl})`;
+  // Escapa caracteres especiais na legenda original
+  const safeCaptionText = escapeMarkdown(originalCaption);
+  const safeUserMention = escapeMarkdown(userMention);
+  
+  // Para o link, vamos usar texto simples ao invés de link clicável para evitar problemas
+  return `${safeCaptionText}\n\n📤 Enviado por: ${safeUserMention}\n🔗 Link original: ${originalUrl}`;
 }
 
 // Função para processar dados específicos de cada plataforma
@@ -620,8 +632,7 @@ bot.hears(urlPatterns, async (ctx) => {
         await ctx.replyWithAudio(
           { url: mediaInfo.mp3, filename: mediaInfo?.caption || 'Audio.mp3' },
           { 
-            caption: formattedCaption,
-            parse_mode: 'Markdown'
+            caption: formattedCaption
           }
         );
        
@@ -632,21 +643,30 @@ bot.hears(urlPatterns, async (ctx) => {
                 await ctx.replyWithPhoto(
                     { url: mediaInfo.url },
                     {
-                      caption: formattedCaption,
-                      parse_mode: 'Markdown'
+                      caption: formattedCaption
                     }
                   );
             } catch (error) {
                 console.log('Erro ao enviar como foto, tentando como vídeo:', error.message);
                 // Se falhar como foto, tenta como vídeo
-                await ctx.replyWithVideo(
+                try {
+                  await ctx.replyWithVideo(
+                      { url: mediaInfo.url },
+                      {
+                        caption: formattedCaption,
+                        thumbnail: mediaInfo.thumbnail 
+                      }
+                    );
+                } catch (videoError) {
+                  console.log('Erro ao enviar como vídeo também, enviando sem legenda:', videoError.message);
+                  // Último recurso: enviar sem legenda
+                  await ctx.replyWithVideo(
                     { url: mediaInfo.url },
-                    {
-                      caption: formattedCaption,
-                      parse_mode: 'Markdown',
-                      thumbnail: mediaInfo.thumbnail 
-                    }
+                    { thumbnail: mediaInfo.thumbnail }
                   );
+                  // Enviar legenda separadamente
+                  await ctx.reply(formattedCaption);
+                }
             }
         } else {
             try {
@@ -654,7 +674,6 @@ bot.hears(urlPatterns, async (ctx) => {
                     { url: mediaInfo.url },
                     {
                       caption: formattedCaption,
-                      parse_mode: 'Markdown',
                       thumbnail: mediaInfo.thumbnail 
                     }
                   );
@@ -662,13 +681,22 @@ bot.hears(urlPatterns, async (ctx) => {
                 console.log('Erro ao enviar como vídeo, tentando como foto:', error.message);
                 // Se falhar como vídeo, tenta como foto (fallback para Instagram/Threads)
                 if(url.includes('instagram.com') || url.includes('threads.com')){
-                    await ctx.replyWithPhoto(
-                        { url: mediaInfo.url },
-                        {
-                          caption: formattedCaption,
-                          parse_mode: 'Markdown'
-                        }
+                    try {
+                      await ctx.replyWithPhoto(
+                          { url: mediaInfo.url },
+                          {
+                            caption: formattedCaption
+                          }
+                        );
+                    } catch (photoError) {
+                      console.log('Erro ao enviar como foto também, enviando sem legenda:', photoError.message);
+                      // Último recurso: enviar sem legenda
+                      await ctx.replyWithPhoto(
+                        { url: mediaInfo.url }
                       );
+                      // Enviar legenda separadamente
+                      await ctx.reply(formattedCaption);
+                    }
                 }
             }
         }
@@ -722,8 +750,7 @@ bot.hears(urlPatterns, async (ctx) => {
         await ctx.replyWithAudio(
           { url: mediaInfo.mp3, filename: filename },
           { 
-            caption: formattedCaption,
-            parse_mode: 'Markdown'
+            caption: formattedCaption
           }
         );
         await ctx.deleteMessage(); // Remove o botão apenas se o envio foi bem-sucedido
@@ -735,14 +762,23 @@ bot.hears(urlPatterns, async (ctx) => {
           await ctx.replyWithDocument(
             { url: mediaInfo.mp3, filename: filename },
             { 
-              caption: formattedCaption,
-              parse_mode: 'Markdown'
+              caption: formattedCaption
             }
           );
           await ctx.deleteMessage();
         } catch (documentError) {
-          console.error('Erro ao enviar como documento:', documentError.message);
-          throw documentError; // Re-throw para ser capturado pelo catch principal
+          console.error('Erro ao enviar como documento, enviando sem legenda:', documentError.message);
+          // Último recurso: sem legenda
+          try {
+            await ctx.replyWithDocument(
+              { url: mediaInfo.mp3, filename: filename }
+            );
+            await ctx.reply(formattedCaption);
+            await ctx.deleteMessage();
+          } catch (finalError) {
+            console.error('Erro final ao enviar documento:', finalError.message);
+            throw finalError;
+          }
         }
       }
       
@@ -754,7 +790,192 @@ bot.hears(urlPatterns, async (ctx) => {
       await ctx.reply(`❌ Não foi possível baixar o áudio.\nMotivo: ${error.message}\n\nTente novamente mais tarde ou use outro link.`);
     }
   });
+
+  // Comando para listar grupos (apenas para o dono do bot)
+  bot.command('grupos', async (ctx) => {
+    try {
+      // Verifica se é o dono do bot
+      if (ctx.from.id !== parseInt(OWNER_ID)) {
+        await ctx.reply('❌ Acesso negado. Este comando é restrito ao administrador do bot.');
+        return;
+      }
+      
+      await ctx.reply('🔍 Verificando grupos...');
+      
+      // Pega informações sobre o bot
+      const botInfo = await bot.telegram.getMe();
+      
+      // Tenta obter updates recentes para identificar chats (com limite para evitar conflitos)
+      const updates = await bot.telegram.getUpdates({ limit: 20, timeout: 5 });
+      
+      // Coleta IDs únicos de chats/grupos
+      const chatIds = new Set();
+      const chatMap = new Map();
+      
+      updates.forEach(update => {
+        if (update.message) {
+          const chat = update.message.chat;
+          if (chat.type === 'group' || chat.type === 'supergroup') {
+            const chatKey = chat.id.toString();
+            if (!chatMap.has(chatKey)) {
+              chatMap.set(chatKey, {
+                id: chat.id,
+                title: chat.title || 'Sem título',
+                type: chat.type
+              });
+            }
+          }
+        }
+      });
+      
+      if (chatMap.size === 0) {
+        await ctx.reply('📊 Nenhum grupo encontrado nos updates recentes.\n💡 O bot precisa receber mensagens nos grupos para listá-los.');
+        return;
+      }
+      
+      let message = `📊 **GRUPOS ENCONTRADOS (${chatMap.size})**\n\n`;
+      let groupCount = 0;
+      
+      for (const [chatId, chat] of chatMap) {
+        groupCount++;
+        message += `${groupCount}. 📍 **${chat.title}**\n`;
+        message += `   ID: \`${chat.id}\`\n`;
+        message += `   Tipo: ${chat.type === 'supergroup' ? 'Supergrupo' : 'Grupo'}\n`;
+        
+        // Tenta obter informações do chat
+        try {
+          const chatInfo = await bot.telegram.getChat(chat.id);
+          if (chatInfo.members_count) {
+            message += `   Membros: ${chatInfo.members_count}\n`;
+          }
+        } catch (error) {
+          message += `   Membros: Não disponível\n`;
+        }
+        
+        message += '\n';
+      }
+      
+      message += `✅ **Total: ${groupCount} grupos ativos**`;
+      
+      await ctx.reply(message, { parse_mode: 'Markdown' });
+      
+    } catch (error) {
+      console.error('❌ Erro ao listar grupos:', error.message);
+      await ctx.reply('❌ Erro ao verificar grupos. Certifique-se de que o bot tem as permissões necessárias.');
+    }
+  });
   
   
-  bot.launch();
-  console.log('Bot está rodando...');
+  // Graceful shutdown
+  process.once('SIGINT', () => {
+    console.log('🛑 Recebido SIGINT. Parando o bot...');
+    bot.stop('SIGINT');
+  });
+  
+  process.once('SIGTERM', () => {
+    console.log('🛑 Recebido SIGTERM. Parando o bot...');
+    bot.stop('SIGTERM');
+  });
+  
+  // Tratamento de erro para conflitos
+  bot.catch((err, ctx) => {
+    console.error(`❌ Erro no bot para ${ctx.updateType}:`, err);
+    if (err.code === 409) {
+      console.log('⚠️ Conflito detectado. Verifique se há outra instância do bot rodando.');
+      process.exit(1);
+    }
+  });
+  
+  try {
+    bot.launch();
+    console.log('Bot está rodando...');
+    
+    // Função para listar grupos após o bot iniciar (com delay maior para evitar conflitos)
+    setTimeout(async () => {
+      try {
+        console.log('\n🔍 Verificando grupos...');
+        
+        // Pega informações sobre o bot
+        const botInfo = await bot.telegram.getMe();
+        console.log(`📱 Bot: @${botInfo.username} (${botInfo.first_name})`);
+        
+        // Aguarda um pouco mais antes de fazer getUpdates para evitar conflitos
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Tenta obter updates recentes para identificar chats
+        const updates = await bot.telegram.getUpdates({ limit: 10 });
+        
+        // Coleta IDs únicos de chats/grupos
+        const chatIds = new Set();
+        
+        updates.forEach(update => {
+          if (update.message) {
+            const chat = update.message.chat;
+            if (chat.type === 'group' || chat.type === 'supergroup') {
+              chatIds.add({
+                id: chat.id,
+                title: chat.title || 'Sem título',
+                type: chat.type,
+                memberCount: chat.all_members_are_administrators !== undefined ? 'N/A' : 'N/A'
+              });
+            }
+          }
+        });
+        
+        if (chatIds.size === 0) {
+          console.log('📊 Nenhum grupo encontrado nos updates recentes.');
+          console.log('💡 O bot precisa receber mensagens nos grupos para listá-los.');
+        } else {
+          console.log(`\n📊 GRUPOS ENCONTRADOS (${chatIds.size}):`);
+          console.log('════════════════════════════════════════');
+          
+          let groupCount = 0;
+          for (const chat of chatIds) {
+            groupCount++;
+            console.log(`${groupCount}. 📍 ${chat.title}`);
+            console.log(`   ID: ${chat.id}`);
+            console.log(`   Tipo: ${chat.type}`);
+            
+            // Tenta obter informações do chat
+            try {
+              const chatInfo = await bot.telegram.getChat(chat.id);
+              if (chatInfo.members_count) {
+                console.log(`   Membros: ${chatInfo.members_count}`);
+              }
+            } catch (error) {
+              console.log(`   Membros: Não foi possível obter`);
+            }
+            
+            console.log('   ────────────────────────');
+          }
+          
+          console.log(`\n✅ Total: ${groupCount} grupos ativos\n`);
+        }
+        
+      } catch (error) {
+        if (error.code === 409) {
+          console.error('❌ Conflito de instâncias detectado!');
+          console.log('💡 Soluções:');
+          console.log('   1. Pare todas as outras instâncias do bot');
+          console.log('   2. Aguarde alguns minutos antes de reiniciar');
+          console.log('   3. Certifique-se de usar apenas uma instância por vez');
+        } else {
+          console.error('❌ Erro ao verificar grupos:', error.message);
+        }
+        console.log('💡 Certifique-se de que o bot tem as permissões necessárias.\n');
+      }
+    }, 5000); // Aumentado para 5 segundos
+    
+  } catch (error) {
+    if (error.code === 409) {
+      console.error('❌ ERRO: Outra instância do bot já está rodando!');
+      console.log('💡 Para resolver:');
+      console.log('   1. Pare todas as instâncias do bot (PM2, terminal, etc.)');
+      console.log('   2. Aguarde 2-3 minutos');
+      console.log('   3. Inicie apenas uma instância');
+      console.log('   4. Comando para parar PM2: pm2 stop all && pm2 delete all');
+    } else {
+      console.error('❌ Erro ao iniciar o bot:', error.message);
+    }
+    process.exit(1);
+  }
