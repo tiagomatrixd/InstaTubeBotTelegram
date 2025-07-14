@@ -19,8 +19,11 @@
   },
   "homepage": "https://github.com/tiagomatrixd/InstaTubeBotTelegram#readme",
   "dependencies": {
+    "axios": "^1.10.0",
     "btch-downloader": "^4.0.15",
+    "cheerio": "^1.1.0",
     "dotenv": "^16.4.7",
+    "node-fetch": "^3.3.2",
     "telegraf": "^4.16.3"
   }
 }
